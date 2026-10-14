@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AES Workbench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: two benches side by side (Encrypt | Decrypt) that stack at phone width, under a slim header.
+   Dark-first, because the bench is mostly used at night next to a terminal; a full light palette follows. */
+:root {
+  --bg: #0e1319;
+  --panel: #151c25;
+  --field: #0a0e13;
+  --line: #273140;
+  --fg: #e4e8ee;
+  --muted: #8793a3;
+  --accent: #f08a24;
+  --accent-fg: #1b1207;
+  --select: #4f8ee8;
+  --select-soft: #1a2b45;
+  --ok: #5cc08a;
+  --warn: #e2b84a;
+  --bad: #ef6f66;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", Consolas, "Courier New", monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #eef1f5; --panel: #ffffff; --field: #f7f9fb; --line: #d3dae3; --fg: #17202b; --muted: #5d6b7b;
+    --accent: #d8711a; --accent-fg: #ffffff; --select: #2b66c4; --select-soft: #e3ecfa;
+    --ok: #1f8a4c; --warn: #9a6b00; --bad: #c43d33;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #eef1f5; --panel: #ffffff; --field: #f7f9fb; --line: #d3dae3; --fg: #17202b; --muted: #5d6b7b;
+  --accent: #d8711a; --accent-fg: #ffffff; --select: #2b66c4; --select-soft: #e3ecfa;
+  --ok: #1f8a4c; --warn: #9a6b00; --bad: #c43d33;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 var(--font-body);
+  padding-inline: 16px;
+  padding-block: 0 40px;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1240px; margin-inline: auto; }
+
+.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 24px; padding-block: 22px 18px; }
+.brand { margin: 0; font-size: 1.35rem; font-weight: 600; letter-spacing: -0.01em; }
+.tagline { margin: 0; color: var(--muted); font-size: 0.9rem; }
+
+.benches { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 20px; }
+.bench {
+  min-width: 0;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 18px 20px 22px;
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+.bench-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+.bench-head h2 { margin: 0; font-size: 1.1rem; font-weight: 600; }
+.transform { font-family: var(--font-mono); font-size: 0.8rem; color: var(--muted); background: var(--field); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; }
+
+.field { display: grid; gap: 6px; min-width: 0; }
+.field > label, .field-head > label { font-weight: 500; }
+.field-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-height: 28px; }
+.field-head > label { margin-right: auto; }
+.meter { font-family: var(--font-mono); font-size: 0.76rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.meter.ok { color: var(--ok); }
+.meter.warn { color: var(--warn); }
+.meter.bad { color: var(--bad); }
+
+textarea, input[type="text"], select {
+  width: 100%;
+  background: var(--field);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 11px;
+  font: inherit;
+}
+textarea.mono, input.mono { font-family: var(--font-mono); font-size: 0.9rem; }
+textarea { resize: vertical; min-height: 96px; line-height: 1.45; }
+textarea[readonly] { color: var(--fg); }
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
+:is(textarea, input, select):focus-visible { outline: 2px solid var(--select); outline-offset: 1px; border-color: var(--select); }
+:is(textarea, input, select):disabled { opacity: 0.5; cursor: not-allowed; }
+.row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chips-label { font-size: 0.78rem; color: var(--muted); margin-right: 4px; }
+.chip { position: relative; }
+.chip input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; margin: 0; cursor: pointer; }
+.chip span { display: inline-block; padding: 3px 11px; border-radius: 999px; border: 1px solid var(--line); font-size: 0.8rem; color: var(--muted); }
+.chip:has(input:checked) span { color: var(--fg); border-color: var(--select); background: var(--select-soft); }
+.chip:has(input:focus-visible) span { outline: 2px solid var(--select); outline-offset: 1px; }
+
+.btn-primary, .btn-ghost { font: inherit; cursor: pointer; border-radius: 6px; }
+.btn-primary { background: var(--accent); color: var(--accent-fg); font-weight: 600; padding: 10px 28px; border: 0; }
+.btn-primary:hover { filter: brightness(1.08); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
+.btn-ghost { background: transparent; color: var(--select); border: 1px solid var(--line); padding: 3px 10px; font-size: 0.8rem; }
+.btn-ghost:hover { border-color: var(--select); }
+.btn-ghost:disabled { opacity: 0.5; cursor: not-allowed; border-color: var(--line); }
+:is(.btn-primary, .btn-ghost):focus-visible { outline: 2px solid var(--select); outline-offset: 2px; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 18px; }
+
+.status { margin: 0; font-size: 0.84rem; color: var(--muted); min-height: 1.3em; }
+.status.ok { color: var(--ok); }
+.status.warn { color: var(--warn); }
+.status.bad { color: var(--bad); }
+.hint { margin: -6px 0 0; font-size: 0.78rem; color: var(--muted); }
+
+.notes { color: var(--muted); font-size: 0.8rem; padding-top: 24px; max-width: 72ch; }
+.notes p { margin: 0 0 6px; }
+.notes code { font-family: var(--font-mono); font-size: 0.78rem; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .btn-primary, .btn-ghost, .chip span { transition: filter 0.15s, border-color 0.15s, background-color 0.15s; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1 class="brand">AES Workbench</h1>
+    <p class="tagline">Encrypts and decrypts inside this browser tab. Keys and text never leave your machine.</p>
+  </header>
+
+  <main class="benches">
+    <section class="bench" aria-labelledby="enc-title">
+      <div class="bench-head">
+        <h2 id="enc-title">Encrypt</h2>
+        <code class="transform" id="enc-transform">AES/CBC/PKCS5Padding</code>
+      </div>
+
+      <div class="field">
+        <div class="field-head">
+          <label for="enc-input">Plain text</label>
+          <span class="meter" id="enc-input-meter"></span>
+        </div>
+        <textarea id="enc-input" rows="5" spellcheck="false" placeholder="Text to encrypt"></textarea>
+      </div>
+
+      <div class="field">
+        <div class="field-head">
+          <label for="enc-key">Secret key</label>
+          <span class="meter" id="enc-key-meter"></span>
+          <button type="button" class="btn-ghost" id="enc-key-gen">Generate</button>
+        </div>
+        <input id="enc-key" class="mono" type="text" autocomplete="off" spellcheck="false" placeholder="16 bytes">
+        <div class="chips" id="enc-key-format">
+          <span class="chips-label">Key format</span>
+          <label class="chip"><input type="radio" name="enc-key-format" id="enc-key-format-text" value="text" checked><span>Plain text</span></label>
+          <label class="chip"><input type="radio" name="enc-key-format" id="enc-key-format-base64" value="base64"><span>Base64</span></label>
+          <label class="chip"><input type="radio" name="enc-key-format" id="enc-key-format-hex" value="hex"><span>Hex</span></label>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="enc-mode">Cipher mode</label>
+          <select id="enc-mode">
+            <option>ECB</option><option selected>CBC</option><option>CFB</option><option>OFB</option><option>CTR</option><option>GCM</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="enc-padding">Padding</label>
+          <select id="enc-padding">
+            <option>PKCS5Padding</option><option>NoPadding</option><option>ZeroPadding</option><option>ISO10126Padding</option><option>X923Padding</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="enc-keysize">Key size</label>
+          <select id="enc-keysize">
+            <option value="128">128 bits</option><option value="192">192 bits</option><option value="256">256 bits</option>
+          </select>
+        </div>
+      </div>
+      <p class="hint" id="enc-mode-hint"></p>
+
+      <div class="field">
+        <div class="field-head">
+          <label for="enc-iv">IV</label>
+          <span class="meter" id="enc-iv-meter"></span>
+          <button type="button" class="btn-ghost" id="enc-iv-gen">Generate</button>
+        </div>
+        <input id="enc-iv" class="mono" type="text" autocomplete="off" spellcheck="false" placeholder="16 bytes, or empty for all zeros">
+        <div class="chips" id="enc-iv-format">
+          <span class="chips-label">IV format</span>
+          <label class="chip"><input type="radio" name="enc-iv-format" id="enc-iv-format-text" value="text" checked><span>Plain text</span></label>
+          <label class="chip"><input type="radio" name="enc-iv-format" id="enc-iv-format-base64" value="base64"><span>Base64</span></label>
+          <label class="chip"><input type="radio" name="enc-iv-format" id="enc-iv-format-hex" value="hex"><span>Hex</span></label>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button type="button" class="btn-primary" id="enc-run">Encrypt</button>
+        <div class="chips" id="enc-out-format">
+          <span class="chips-label">Output</span>
+          <label class="chip"><input type="radio" name="enc-out-format" id="enc-out-format-base64" value="base64" checked><span>Base64</span></label>
+          <label class="chip"><input type="radio" name="enc-out-format" id="enc-out-format-hex" value="hex"><span>Hex</span></label>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-head">
+          <label for="enc-output">Encrypted output</label>
+          <button type="button" class="btn-ghost" id="enc-copy">Copy</button>
+          <button type="button" class="btn-ghost" id="enc-send">Send to Decrypt</button>
+        </div>
+        <textarea id="enc-output" class="mono" rows="4" readonly spellcheck="false" placeholder="Ciphertext appears here"></textarea>
+        <p class="status" id="enc-status" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <section class="bench" aria-labelledby="dec-title">
+      <div class="bench-head">
+        <h2 id="dec-title">Decrypt</h2>
+        <code class="transform" id="dec-transform">AES/CBC/PKCS5Padding</code>
+      </div>
+
+      <div class="field">
+        <div class="field-head">
+          <label for="dec-input">Encrypted text</label>
+          <span class="meter" id="dec-input-meter"></span>
+        </div>
+        <textarea id="dec-input" class="mono" rows="5" spellcheck="false" placeholder="Paste the Base64 or Hex ciphertext"></textarea>
+        <div class="chips" id="dec-in-format">
+          <span class="chips-label">Input format</span>
+          <label class="chip"><input type="radio" name="dec-in-format" id="dec-in-format-base64" value="base64" checked><span>Base64</span></label>
+          <label class="chip"><input type="radio" name="dec-in-format" id="dec-in-format-hex" value="hex"><span>Hex</span></label>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-head">
+          <label for="dec-key">Secret key</label>
+          <span class="meter" id="dec-key-meter"></span>
+          <button type="button" class="btn-ghost" id="dec-key-gen">Generate</button>
+        </div>
+        <input id="dec-key" class="mono" type="text" autocomplete="off" spellcheck="false" placeholder="16 bytes">
+        <div class="chips" id="dec-key-format">
+          <span class="chips-label">Key format</span>
+          <label class="chip"><input type="radio" name="dec-key-format" id="dec-key-format-text" value="text" checked><span>Plain text</span></label>
+          <label class="chip"><input type="radio" name="dec-key-format" id="dec-key-format-base64" value="base64"><span>Base64</span></label>
+          <label class="chip"><input type="radio" name="dec-key-format" id="dec-key-format-hex" value="hex"><span>Hex</span></label>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="dec-mode">Cipher mode</label>
+          <select id="dec-mode">
+            <option>ECB</option><option selected>CBC</option><option>CFB</option><option>OFB</option><option>CTR</option><option>GCM</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="dec-padding">Padding</label>
+          <select id="dec-padding">
+            <option>PKCS5Padding</option><option>NoPadding</option><option>ZeroPadding</option><option>ISO10126Padding</option><option>X923Padding</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="dec-keysize">Key size</label>
+          <select id="dec-keysize">
+            <option value="128">128 bits</option><option value="192">192 bits</option><option value="256">256 bits</option>
+          </select>
+        </div>
+      </div>
+      <p class="hint" id="dec-mode-hint"></p>
+
+      <div class="field">
+        <div class="field-head">
+          <label for="dec-iv">IV used during encryption</label>
+          <span class="meter" id="dec-iv-meter"></span>
+          <button type="button" class="btn-ghost" id="dec-iv-gen">Generate</button>
+        </div>
+        <input id="dec-iv" class="mono" type="text" autocomplete="off" spellcheck="false" placeholder="16 bytes, or empty for all zeros">
+        <div class="chips" id="dec-iv-format">
+          <span class="chips-label">IV format</span>
+          <label class="chip"><input type="radio" name="dec-iv-format" id="dec-iv-format-text" value="text" checked><span>Plain text</span></label>
+          <label class="chip"><input type="radio" name="dec-iv-format" id="dec-iv-format-base64" value="base64"><span>Base64</span></label>
+          <label class="chip"><input type="radio" name="dec-iv-format" id="dec-iv-format-hex" value="hex"><span>Hex</span></label>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button type="button" class="btn-primary" id="dec-run">Decrypt</button>
+        <div class="chips" id="dec-out-format">
+          <span class="chips-label">Output</span>
+          <label class="chip"><input type="radio" name="dec-out-format" id="dec-out-format-text" value="text" checked><span>Plain text</span></label>
+          <label class="chip"><input type="radio" name="dec-out-format" id="dec-out-format-base64" value="base64"><span>Base64</span></label>
+          <label class="chip"><input type="radio" name="dec-out-format" id="dec-out-format-hex" value="hex"><span>Hex</span></label>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-head">
+          <label for="dec-output">Decrypted output</label>
+          <button type="button" class="btn-ghost" id="dec-copy">Copy</button>
+        </div>
+        <textarea id="dec-output" class="mono" rows="4" readonly spellcheck="false" placeholder="Plain text appears here"></textarea>
+        <p class="status" id="dec-status" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="notes">
+    <p>The badge on each bench is the Java <code>Cipher</code> transformation these settings correspond to, so output matches Java, OpenSSL and most other tools when the same raw key and IV are used. Plain-text keys count one byte per ASCII character. An empty IV means sixteen zero bytes, as most libraries assume. GCM appends its 16-byte authentication tag to the ciphertext.</p>
+    <p>Ctrl+Enter in a text box runs that bench. Mode, padding, key size and format choices are remembered on this device; keys and text are not.</p>
+  </footer>
+</div>
+
+<script src="vendor/crypto-js.min.js"></script>
+<script>
+  if (!window.CryptoJS) {
+    document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"><\/script>');
+  }
+</script>
+<script src="aes-core.js"></script>
+<script>
+(function () {
+  'use strict';
+  var $ = function (id) { return document.getElementById(id); };
+  var A = window.AESCore;
+  var SETTINGS_KEY = 'aes-workbench-settings';
+  var FORMAT_NAMES = { text: 'plain text', base64: 'Base64', hex: 'Hex' };
+  var MODE_HINTS = {
+    ECB: 'ECB encrypts every 16-byte block on its own and uses no IV. Equal blocks give equal output, so prefer CBC or GCM for anything that matters.',
+    CBC: 'CBC chains the blocks with a 16-byte IV and needs padding. This is AES/CBC/PKCS5Padding in Java and aes-cbc in OpenSSL.',
+    CFB: 'CFB (128-bit feedback) works as a stream cipher: no padding needed, 16-byte IV.',
+    OFB: 'OFB works as a stream cipher: no padding needed, 16-byte IV.',
+    CTR: 'CTR works as a stream cipher: no padding needed, 16-byte IV (nonce and counter). Never reuse an IV with the same key.',
+    GCM: 'GCM also authenticates: a 16-byte tag is appended to the ciphertext and checked on decrypt. Use a 12-byte IV and never reuse it with the same key.'
+  };
+
+  if (!A || !window.CryptoJS) {
+    Array.prototype.forEach.call(document.querySelectorAll('.status'), function (s) {
+      s.className = 'status bad';
+      s.textContent = 'The crypto library did not load. Keep the vendor folder next to this page, or go online once so it can load from cdnjs.';
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('.btn-primary'), function (b) { b.disabled = true; });
+    return;
+  }
+
+  function chipGroup(id) {
+    var inputs = Array.prototype.slice.call($(id).querySelectorAll('input[type="radio"]'));
+    return {
+      get: function () { var c = inputs.filter(function (i) { return i.checked; })[0]; return (c || inputs[0]).value; },
+      set: function (v) { inputs.forEach(function (i) { if (i.value === v) i.checked = true; }); },
+      onChange: function (fn) { inputs.forEach(function (i) { i.addEventListener('change', fn); }); }
+    };
+  }
+  function show(el, cls, kind, text) { el.className = cls + (kind ? ' ' + kind : ''); el.textContent = text; }
+  function byteLength(str, format) {
+    if (format === 'text' ? str.length === 0 : str.trim().length === 0) return 0;
+    try { return A.decode(str, format).length; } catch (e) { return -1; }
+  }
+  function flash(btn, text) {
+    if (!btn.dataset.label) btn.dataset.label = btn.textContent;
+    btn.textContent = text;
+    clearTimeout(btn._flashTimer);
+    btn._flashTimer = setTimeout(function () { btn.textContent = btn.dataset.label; }, 1600);
+  }
+
+  function makePanel(p, kind) {
+    var el = {
+      input: $(p + '-input'), inputMeter: $(p + '-input-meter'),
+      inFormat: kind === 'dec' ? chipGroup(p + '-in-format') : null,
+      key: $(p + '-key'), keyMeter: $(p + '-key-meter'), keyGen: $(p + '-key-gen'), keyFormat: chipGroup(p + '-key-format'),
+      mode: $(p + '-mode'), padding: $(p + '-padding'), keysize: $(p + '-keysize'), modeHint: $(p + '-mode-hint'),
+      iv: $(p + '-iv'), ivMeter: $(p + '-iv-meter'), ivGen: $(p + '-iv-gen'), ivFormat: chipGroup(p + '-iv-format'),
+      outFormat: chipGroup(p + '-out-format'),
+      run: $(p + '-run'), output: $(p + '-output'), copy: $(p + '-copy'), status: $(p + '-status'), transform: $(p + '-transform'),
+      send: kind === 'enc' ? $(p + '-send') : null
+    };
+    var lastMode = el.mode.value;
+
+    function keyBytesNeeded() { return Number(el.keysize.value) / 8; }
+    function ivBytesNeeded() { return A.ivBytes(el.mode.value); }
+
+    function refresh() {
+      var mode = el.mode.value, stream = A.isStream(mode), bits = el.keysize.value;
+      el.padding.disabled = mode === 'GCM';
+      el.iv.disabled = el.ivGen.disabled = mode === 'ECB';
+      el.transform.textContent = A.transformation(mode, el.padding.value);
+      el.modeHint.textContent = MODE_HINTS[mode];
+      el.key.placeholder = keyBytesNeeded() + ' bytes';
+      el.iv.placeholder = mode === 'GCM' ? '12 bytes recommended, or empty for all zeros' : '16 bytes, or empty for all zeros';
+
+      var need = keyBytesNeeded(), kn = byteLength(el.key.value, el.keyFormat.get());
+      if (kn === 0) show(el.keyMeter, 'meter', '', 'needs ' + need + ' bytes');
+      else if (kn < 0) show(el.keyMeter, 'meter', 'bad', 'not valid ' + FORMAT_NAMES[el.keyFormat.get()]);
+      else if (kn === need) show(el.keyMeter, 'meter', 'ok', kn + ' bytes, fits AES-' + bits);
+      else show(el.keyMeter, 'meter', 'warn', kn + ' bytes, AES-' + bits + ' needs ' + need);
+
+      if (mode === 'ECB') show(el.ivMeter, 'meter', '', 'not used in ECB');
+      else {
+        var vn = byteLength(el.iv.value, el.ivFormat.get());
+        if (vn === 0) show(el.ivMeter, 'meter', 'warn', 'empty, all-zero IV will be used');
+        else if (vn < 0) show(el.ivMeter, 'meter', 'bad', 'not valid ' + FORMAT_NAMES[el.ivFormat.get()]);
+        else if (mode === 'GCM') show(el.ivMeter, 'meter', vn === 12 ? 'ok' : '', vn + ' bytes' + (vn === 12 ? ', standard' : ' (12 is standard)'));
+        else if (vn === 16) show(el.ivMeter, 'meter', 'ok', '16 bytes');
+        else show(el.ivMeter, 'meter', 'warn', vn + ' bytes, needs 16');
+      }
+
+      if (kind === 'enc') {
+        var n = A.utf8Encode(el.input.value).length;
+        show(el.inputMeter, 'meter', '', n ? n + ' bytes' : '');
+      } else {
+        var cn = byteLength(el.input.value, el.inFormat.get());
+        if (cn === 0) show(el.inputMeter, 'meter', '', '');
+        else if (cn < 0) show(el.inputMeter, 'meter', 'bad', 'not valid ' + FORMAT_NAMES[el.inFormat.get()]);
+        else if (!stream && cn % 16) show(el.inputMeter, 'meter', 'warn', cn + ' bytes, not block-aligned');
+        else show(el.inputMeter, 'meter', '', cn + ' bytes' + (stream ? '' : ', ' + cn / 16 + (cn === 16 ? ' block' : ' blocks')));
+      }
+    }
+
+    function parseKey() {
+      var fmt = el.keyFormat.get(), raw = el.key.value;
+      if (!raw) throw new Error('Enter a secret key, or press Generate next to it.');
+      var key;
+      try { key = A.decode(raw, fmt); } catch (e) { throw new Error('Secret key: ' + e.message); }
+      var need = keyBytesNeeded(), bits = el.keysize.value;
+      if (key.length !== need) {
+        var msg = 'The key is ' + key.length + ' bytes, but AES-' + bits + ' needs exactly ' + need + '.';
+        if (A.KEY_SIZES.indexOf(key.length * 8) >= 0) msg += ' It fits AES-' + key.length * 8 + ': change Key size to ' + key.length * 8 + ' to use it as is.';
+        else if (fmt === 'text') msg += ' Plain-text keys count one byte per ASCII character.';
+        throw new Error(msg);
+      }
+      return key;
+    }
+    function parseIv(mode, warnings) {
+      if (mode === 'ECB') return null;
+      var fmt = el.ivFormat.get(), raw = el.iv.value;
+      if (fmt === 'text' ? raw.length === 0 : raw.trim().length === 0) {
+        warnings.push('No IV was given, so an all-zero IV was used.' + (kind === 'enc' ? ' Press Generate next to IV before encrypting anything real.' : ''));
+        return new Uint8Array(ivBytesNeeded());
+      }
+      try { return A.decode(raw, fmt); } catch (e) { throw new Error('IV: ' + e.message); }
+    }
+
+    function runEncrypt() {
+      var warnings = [];
+      var mode = el.mode.value, padding = el.padding.value;
+      return Promise.resolve().then(function () {
+        if (!el.input.value) throw new Error('Enter some text to encrypt.');
+        var plaintext = A.utf8Encode(el.input.value);
+        var key = parseKey();
+        var iv = parseIv(mode, warnings);
+        return A.encrypt({ plaintext: plaintext, key: key, iv: iv, mode: mode, padding: padding }).then(function (ct) {
+          var fmt = el.outFormat.get();
+          el.output.value = A.encode(ct, fmt);
+          show(el.status, 'status', warnings.length ? 'warn' : 'ok',
+            'Encrypted ' + plaintext.length + ' bytes into ' + ct.length + ' bytes of ciphertext, shown as ' + FORMAT_NAMES[fmt] + '.' + (warnings.length ? ' ' + warnings.join(' ') : ''));
+        });
+      }).catch(function (e) {
+        el.output.value = '';
+        show(el.status, 'status', 'bad', e.message);
+      });
+    }
+    function runDecrypt() {
+      var warnings = [];
+      var mode = el.mode.value, padding = el.padding.value;
+      return Promise.resolve().then(function () {
+        if (!el.input.value.trim()) throw new Error('Paste the encrypted text first.');
+        var ct;
+        try { ct = A.decode(el.input.value, el.inFormat.get()); } catch (e) { throw new Error('Encrypted text: ' + e.message); }
+        var key = parseKey();
+        var iv = parseIv(mode, warnings);
+        return A.decrypt({ ciphertext: ct, key: key, iv: iv, mode: mode, padding: padding }).then(function (pt) {
+          var fmt = el.outFormat.get();
+          if (fmt === 'text' && !A.isValidUtf8(pt)) {
+            el.output.value = A.hexEncode(pt);
+            show(el.status, 'status', 'warn', 'Decrypted ' + pt.length + ' bytes, but they are not readable text, so they are shown as Hex. Usually the key, IV, mode or padding differs from what was used to encrypt.');
+            return;
+          }
+          el.output.value = A.encode(pt, fmt);
+          show(el.status, 'status', warnings.length ? 'warn' : 'ok',
+            'Decrypted ' + ct.length + ' bytes of ciphertext into ' + pt.length + ' bytes' + (fmt === 'text' ? ' of text.' : ', shown as ' + FORMAT_NAMES[fmt] + '.') + (warnings.length ? ' ' + warnings.join(' ') : ''));
+        });
+      }).catch(function (e) {
+        el.output.value = '';
+        show(el.status, 'status', 'bad', e.message);
+      });
+    }
+
+    el.mode.addEventListener('change', function () {
+      var mode = el.mode.value, wasStream = A.isStream(lastMode), nowStream = A.isStream(mode);
+      if (nowStream && !wasStream && el.padding.value === 'PKCS5Padding') el.padding.value = 'NoPadding';
+      if (!nowStream && wasStream && el.padding.value === 'NoPadding') el.padding.value = 'PKCS5Padding';
+      lastMode = mode;
+      refresh(); saveSettings();
+    });
+    [el.padding, el.keysize].forEach(function (s) { s.addEventListener('change', function () { refresh(); saveSettings(); }); });
+    [el.keyFormat, el.ivFormat, el.outFormat, el.inFormat].forEach(function (g) { if (g) g.onChange(function () { refresh(); saveSettings(); }); });
+    [el.input, el.key, el.iv].forEach(function (i) { i.addEventListener('input', refresh); });
+    el.keyGen.addEventListener('click', function () { el.key.value = A.generate(keyBytesNeeded(), el.keyFormat.get()); refresh(); });
+    el.ivGen.addEventListener('click', function () { el.iv.value = A.generate(ivBytesNeeded(), el.ivFormat.get()); refresh(); });
+    el.run.addEventListener('click', kind === 'enc' ? runEncrypt : runDecrypt);
+    [el.input, el.key, el.iv].forEach(function (i) {
+      i.addEventListener('keydown', function (e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); el.run.click(); }
+      });
+    });
+    el.copy.addEventListener('click', function () {
+      var text = el.output.value;
+      if (!text) { flash(el.copy, 'Nothing yet'); return; }
+      var done = false;
+      var finish = function () { flash(el.copy, done ? 'Copied' : 'Select and copy'); };
+      var fallback = function () {
+        try { el.output.focus(); el.output.select(); done = document.execCommand('copy'); } catch (e) { done = false; }
+        finish();
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { done = true; finish(); }, fallback);
+      } else {
+        fallback();
+      }
+    });
+
+    function settings() {
+      return {
+        mode: el.mode.value, padding: el.padding.value, keysize: el.keysize.value,
+        keyFormat: el.keyFormat.get(), ivFormat: el.ivFormat.get(), outFormat: el.outFormat.get(),
+        inFormat: el.inFormat ? el.inFormat.get() : undefined
+      };
+    }
+    function apply(s) {
+      if (!s) return;
+      if (A.MODES.indexOf(s.mode) >= 0) el.mode.value = s.mode;
+      if (A.PADDINGS.indexOf(s.padding) >= 0) el.padding.value = s.padding;
+      if (['128', '192', '256'].indexOf(String(s.keysize)) >= 0) el.keysize.value = String(s.keysize);
+      el.keyFormat.set(s.keyFormat); el.ivFormat.set(s.ivFormat); el.outFormat.set(s.outFormat);
+      if (el.inFormat) el.inFormat.set(s.inFormat);
+      lastMode = el.mode.value;
+      refresh();
+    }
+    function syncMode() { lastMode = el.mode.value; }
+
+    return { el: el, refresh: refresh, settings: settings, apply: apply, syncMode: syncMode,
+      runEncrypt: runEncrypt, runDecrypt: runDecrypt,
+      setStatus: function (kind, text) { show(el.status, 'status', kind, text); } };
+  }
+
+  var enc = makePanel('enc', 'enc');
+  var dec = makePanel('dec', 'dec');
+
+  function saveSettings() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify({ enc: enc.settings(), dec: dec.settings() })); } catch (e) { /* storage unavailable */ }
+  }
+  try {
+    var saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null');
+    if (saved) { enc.apply(saved.enc); dec.apply(saved.dec); }
+  } catch (e) { /* ignore bad or blocked storage */ }
+  enc.refresh(); dec.refresh();
+
+  enc.el.send.addEventListener('click', function () {
+    if (!enc.el.output.value) { enc.setStatus('warn', 'Encrypt something first, then send it across.'); return; }
+    var e = enc.el, d = dec.el;
+    d.input.value = e.output.value; d.inFormat.set(e.outFormat.get());
+    d.key.value = e.key.value; d.keyFormat.set(e.keyFormat.get());
+    d.iv.value = e.iv.value; d.ivFormat.set(e.ivFormat.get());
+    d.mode.value = e.mode.value; d.padding.value = e.padding.value; d.keysize.value = e.keysize.value;
+    d.output.value = '';
+    dec.syncMode(); dec.refresh(); saveSettings();
+    dec.setStatus('', 'Ciphertext, key, IV and settings copied from Encrypt. Press Decrypt to check the round trip.');
+    d.run.focus();
+  });
+
+  // A fresh page opens ready to use: a sample sentence plus a random key and IV, already encrypted.
+  if (!enc.el.input.value && !enc.el.key.value) {
+    var e = enc.el;
+    e.input.value = 'Meet at the old bridge at nine.';
+    e.key.value = A.generate(Number(e.keysize.value) / 8, e.keyFormat.get());
+    if (e.mode.value !== 'ECB') e.iv.value = A.generate(A.ivBytes(e.mode.value), e.ivFormat.get());
+    enc.refresh();
+    enc.runEncrypt().then(function () {
+      if (e.output.value) enc.setStatus('', 'Ready with a sample sentence and a freshly generated key and IV. Replace them with your own, then press Encrypt.');
+    });
+  }
+})();
+</script>
+</body>
+</html>
