@@ -59,6 +59,13 @@ body {
 .brand { margin: 0; font-size: 1.35rem; font-weight: 600; letter-spacing: -0.01em; }
 .tagline { margin: 0; color: var(--muted); font-size: 0.9rem; }
 
+[hidden] { display: none !important; }
+.defaults { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 18px; padding: 10px 14px; border: 1px dashed var(--line); border-radius: 8px; font-size: 0.84rem; }
+.defaults-label { font-weight: 500; }
+.defaults-state { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-right: auto; min-width: 0; color: var(--muted); }
+.defaults-state code { font-family: var(--font-mono); font-size: 0.84rem; color: var(--fg); overflow-wrap: anywhere; }
+.defaults-source { font-size: 0.76rem; }
+
 .benches { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr)); gap: 20px; }
 .bench {
   min-width: 0;
@@ -139,6 +146,14 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
     <h1 class="brand">AES Workbench</h1>
     <p class="tagline">Encrypts and decrypts inside this browser tab. Keys and text never leave your machine.</p>
   </header>
+
+  <section class="defaults" aria-labelledby="defaults-label">
+    <span class="defaults-label" id="defaults-label">Default key and IV</span>
+    <span class="defaults-state" id="defaults-state"></span>
+    <button type="button" class="btn-ghost" id="defaults-apply" hidden>Fill both benches</button>
+    <button type="button" class="btn-ghost" id="defaults-save">Save current as default</button>
+    <button type="button" class="btn-ghost" id="defaults-clear" hidden>Forget</button>
+  </section>
 
   <main class="benches">
     <section class="bench" aria-labelledby="enc-title">
@@ -321,7 +336,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
 
   <footer class="notes">
     <p>The badge on each bench is the Java <code>Cipher</code> transformation these settings correspond to, so output matches Java, OpenSSL and most other tools when the same raw key and IV are used. Plain-text keys count one byte per ASCII character. An empty IV means sixteen zero bytes, as most libraries assume. GCM appends its 16-byte authentication tag to the ciphertext.</p>
-    <p>Ctrl+Enter in a text box runs that bench. Mode, padding, key size and format choices are remembered on this device; keys and text are not.</p>
+    <p>Ctrl+Enter in a text box runs that bench. Mode, padding, key size and format choices are remembered on this device. Keys and text are not, unless you save a default key and IV, which then stay in this browser only.</p>
   </footer>
 </div>
 
@@ -332,12 +347,15 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
   }
 </script>
 <script src="aes-core.js"></script>
+<!-- Optional and never committed: sets window.AES_WORKBENCH_DEFAULTS. See defaults.example.js. -->
+<script src="defaults.local.js"></script>
 <script>
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var A = window.AESCore;
   var SETTINGS_KEY = 'aes-workbench-settings';
+  var DEFAULTS_KEY = 'aes-workbench-defaults';
   var FORMAT_NAMES = { text: 'plain text', base64: 'Base64', hex: 'Hex' };
   var MODE_HINTS = {
     ECB: 'ECB encrypts every 16-byte block on its own and uses no IV. Equal blocks give equal output, so prefer CBC or GCM for anything that matters.',
@@ -551,8 +569,17 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
       refresh();
     }
     function syncMode() { lastMode = el.mode.value; }
+    function applyDefaults(d) {
+      if (d.key) {
+        el.key.value = d.key; el.keyFormat.set(d.keyFormat);
+        var bits = byteLength(d.key, d.keyFormat) * 8;
+        if (A.KEY_SIZES.indexOf(bits) >= 0) el.keysize.value = String(bits);
+      }
+      if (d.iv) { el.iv.value = d.iv; el.ivFormat.set(d.ivFormat); }
+      refresh();
+    }
 
-    return { el: el, refresh: refresh, settings: settings, apply: apply, syncMode: syncMode,
+    return { el: el, refresh: refresh, settings: settings, apply: apply, syncMode: syncMode, applyDefaults: applyDefaults,
       runEncrypt: runEncrypt, runDecrypt: runDecrypt,
       setStatus: function (kind, text) { show(el.status, 'status', kind, text); } };
   }
@@ -569,6 +596,83 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
   } catch (e) { /* ignore bad or blocked storage */ }
   enc.refresh(); dec.refresh();
 
+  // ---- default key and IV ---------------------------------------------------
+  // Two sources: an optional defaults.local.js next to this page (kept out of git),
+  // or values saved in this browser with the button in the strip. The file wins.
+  var dEl = { state: $('defaults-state'), save: $('defaults-save'), apply: $('defaults-apply'), clear: $('defaults-clear') };
+  function cleanDefaults(d) {
+    if (!d || typeof d !== 'object') return null;
+    var out = {
+      key: typeof d.key === 'string' ? d.key : '',
+      keyFormat: A.FORMATS.indexOf(d.keyFormat) >= 0 ? d.keyFormat : 'text',
+      iv: typeof d.iv === 'string' ? d.iv : '',
+      ivFormat: A.FORMATS.indexOf(d.ivFormat) >= 0 ? d.ivFormat : 'text'
+    };
+    return out.key || out.iv ? out : null;
+  }
+  function loadDefaults() {
+    var fromFile = cleanDefaults(window.AES_WORKBENCH_DEFAULTS);
+    if (fromFile) return { values: fromFile, source: 'file' };
+    try {
+      var stored = cleanDefaults(JSON.parse(localStorage.getItem(DEFAULTS_KEY) || 'null'));
+      if (stored) return { values: stored, source: 'browser' };
+    } catch (e) { /* storage unavailable */ }
+    return null;
+  }
+  var defaults = loadDefaults();
+
+  function renderDefaults() {
+    dEl.state.textContent = '';
+    if (!defaults) {
+      dEl.state.textContent = 'None saved. Enter a key and IV under Encrypt, then save them to have both benches filled in on every visit.';
+      dEl.apply.hidden = true; dEl.clear.hidden = true; dEl.save.hidden = false;
+      return;
+    }
+    var v = defaults.values;
+    function item(label, value, format) {
+      var s = document.createElement('span');
+      var c = document.createElement('code');
+      c.textContent = value;
+      s.appendChild(document.createTextNode(label + ' '));
+      s.appendChild(c);
+      s.appendChild(document.createTextNode(' (' + FORMAT_NAMES[format] + ')'));
+      return s;
+    }
+    if (v.key) dEl.state.appendChild(item('Key', v.key, v.keyFormat));
+    if (v.iv) dEl.state.appendChild(item('IV', v.iv, v.ivFormat));
+    var src = document.createElement('span');
+    src.className = 'defaults-source';
+    src.textContent = defaults.source === 'file' ? 'set in defaults.local.js' : 'saved in this browser';
+    dEl.state.appendChild(src);
+    dEl.apply.hidden = false;
+    dEl.save.hidden = dEl.clear.hidden = defaults.source === 'file';
+  }
+  renderDefaults();
+
+  dEl.save.addEventListener('click', function () {
+    var src = enc.el;
+    var cand = cleanDefaults({ key: src.key.value, keyFormat: src.keyFormat.get(), iv: src.mode.value === 'ECB' ? '' : src.iv.value, ivFormat: src.ivFormat.get() });
+    if (!cand || !cand.key) { flash(dEl.save, 'Enter a key under Encrypt first'); return; }
+    if (A.KEY_SIZES.indexOf(byteLength(cand.key, cand.keyFormat) * 8) < 0) { flash(dEl.save, 'Key must be 16, 24 or 32 bytes'); return; }
+    if (cand.iv && byteLength(cand.iv, cand.ivFormat) < 0) { flash(dEl.save, 'IV is not valid ' + FORMAT_NAMES[cand.ivFormat]); return; }
+    try { localStorage.setItem(DEFAULTS_KEY, JSON.stringify(cand)); }
+    catch (e) { flash(dEl.save, 'This browser blocks storage'); return; }
+    defaults = { values: cand, source: 'browser' };
+    renderDefaults();
+    dec.applyDefaults(cand); saveSettings();
+    flash(dEl.save, 'Saved');
+  });
+  dEl.apply.addEventListener('click', function () {
+    if (!defaults) return;
+    enc.applyDefaults(defaults.values); dec.applyDefaults(defaults.values); saveSettings();
+    flash(dEl.apply, 'Filled');
+  });
+  dEl.clear.addEventListener('click', function () {
+    try { localStorage.removeItem(DEFAULTS_KEY); } catch (e) { /* nothing to remove */ }
+    defaults = null;
+    renderDefaults();
+  });
+
   enc.el.send.addEventListener('click', function () {
     if (!enc.el.output.value) { enc.setStatus('warn', 'Encrypt something first, then send it across.'); return; }
     var e = enc.el, d = dec.el;
@@ -582,8 +686,13 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.8; }
     d.run.focus();
   });
 
-  // A fresh page opens ready to use: a sample sentence plus a random key and IV, already encrypted.
-  if (!enc.el.input.value && !enc.el.key.value) {
+  if (defaults) {
+    // A configured bench opens ready for work: default key and IV in place, text boxes left for the user.
+    enc.applyDefaults(defaults.values); dec.applyDefaults(defaults.values);
+    enc.setStatus('', 'Default key and IV loaded. Enter the text and press Encrypt.');
+    dec.setStatus('', 'Default key and IV loaded. Paste the encrypted text and press Decrypt.');
+  } else if (!enc.el.input.value && !enc.el.key.value) {
+    // A fresh page opens ready to use: a sample sentence plus a random key and IV, already encrypted.
     var e = enc.el;
     e.input.value = 'Meet at the old bridge at nine.';
     e.key.value = A.generate(Number(e.keysize.value) / 8, e.keyFormat.get());
