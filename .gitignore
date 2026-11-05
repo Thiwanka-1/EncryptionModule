@@ -1,3 +1,6 @@
+# Holds a real key and IV. Never commit: the repository and Pages site are public.
+defaults.local.js
+
 node_modules/
 .DS_Store
 Thumbs.db
